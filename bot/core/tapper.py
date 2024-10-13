@@ -29,6 +29,7 @@ def error_handler(func: Callable):
         try:
             return await func(*args, **kwargs)
         except Exception as e:
+            logger.error(f"Error in {func.__name__}: {e}")
             await asyncio.sleep(1)
     return wrapper
 
@@ -41,16 +42,14 @@ async def fetch_youtube_answers():
                 data = await response.text()
                 return json.loads(data)
             else:
+                logger.error(f"Failed to fetch YouTube answers. Status: {response.status}")
                 return None
 
-async def get_youtube_answer(title):
-    answer = await get_youtube_answer(title)
-
+async def get_youtube_answer(title, youtube_answers):
     if youtube_answers:
         for item in youtube_answers['youtube_answers']:
             if item['title'].lower() == title.lower():
                 return item['answer']
-    
     return None
 
 class Tapper:
@@ -60,6 +59,7 @@ class Tapper:
         self.proxy = proxy
         self.tg_web_data = None
         self.tg_client_id = 0
+        self.youtube_answers = None 
 
     async def get_tg_web_data(self) -> str:
         
@@ -221,10 +221,12 @@ class Tapper:
     
     @error_handler
     async def run(self) -> None:
+        self.youtube_answers = await fetch_youtube_answers()
+        
         if settings.USE_RANDOM_DELAY_IN_RUN:
-                random_delay = random.randint(settings.RANDOM_DELAY_IN_RUN[0], settings.RANDOM_DELAY_IN_RUN[1])
-                logger.info(f"{self.session_name} | Bot will start in <y>{random_delay}s</y>")
-                await asyncio.sleep(random_delay)
+            random_delay = random.randint(settings.RANDOM_DELAY_IN_RUN[0], settings.RANDOM_DELAY_IN_RUN[1])
+            logger.info(f"{self.session_name} | Bot will start in <y>{random_delay}s</y>")
+            await asyncio.sleep(random_delay)
                 
         proxy_conn = ProxyConnector().from_url(self.proxy) if self.proxy else None
         http_client = aiohttp.ClientSession(headers=headers, connector=proxy_conn)
@@ -263,7 +265,7 @@ class Tapper:
                 
                 current_time = time()
                 if current_time >= token_expiration:
-                    if (token_expiration != 0): # Чтобы не пугались, скрою от вас когда происходит первый запуск
+                    if (token_expiration != 0):
                         logger.info(f"{self.session_name} | Token expired, refreshing...")
                     ref_id, init_data = await self.get_tg_web_data()
                     http_client.headers['Authorization'] = f"tma {init_data}"
@@ -282,6 +284,7 @@ class Tapper:
                 UserHasOgPass = user.get('hasOgPass', False)
                 logger.info(f"{self.session_name} | User has OG Pass: <y>{UserHasOgPass}</y>")
                 
+
                 data_task = await self.get_tasks(http_client=http_client)
                 if data_task is not None and data_task.get('tasks', {}):
                     for task in data_task.get('tasks'):
@@ -289,24 +292,24 @@ class Tapper:
                             continue
                         id = task.get('id')
                         type = task.get('type')
-                        
+
                         if type in ['ACTIVITY_CHALLENGE', 'INVITE_FRIENDS', 'NICKNAME_CHANGE', 'TON_TRANSACTION', 'BOOST_CHANNEL']:
                             continue
-                        
+
                         title = task.get('title')
                         reward = task.get('rewardPoints')
-                        
-                        type_=('check' if type in ['SUBSCRIBE_TO_CHANNEL'] else 'complete')
-                        
+
+                        type_ = ('check' if type in ['SUBSCRIBE_TO_CHANNEL'] else 'complete')
+
                         if type == 'YOUTUBE_WATCH':
-                            answer = get_youtube_answer(title)
+                            answer = await get_youtube_answer(title, self.youtube_answers)
                             if answer:
                                 type_ += f'?answer={answer}'
                                 logger.info(f"{self.session_name} | Answer found for <y>'{title}'</y>: {answer}")
                             else:
                                 logger.info(f"{self.session_name} | Skipping task {id} - No answer available")
                                 continue
-                        
+
                         done_task = await self.done_tasks(http_client=http_client, task_id=id, type_=type_)
                         if done_task and (done_task.get('success', False) or done_task.get('completed', False)):
                             logger.info(f"{self.session_name} | Task <y>{title}</y> done! Reward: {reward}")
@@ -341,14 +344,10 @@ class Tapper:
             except Exception as error:
                 logger.error(f"{self.session_name} | Unknown error: {error}")
                 await asyncio.sleep(delay=3)
-                
+
             sleep_time = random.randint(settings.SLEEP_TIME[0], settings.SLEEP_TIME[1])
             logger.info(f"{self.session_name} | Sleep <y>{sleep_time}s</y>")
             await asyncio.sleep(delay=sleep_time)
-            
-            
-            
-            
 
 async def run_tapper(tg_client: Client, proxy: str | None):
     try:
