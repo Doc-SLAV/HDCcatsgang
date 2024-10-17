@@ -22,7 +22,6 @@ from bot.exceptions import InvalidSession
 from .headers import headers
 import json
 
-
 def error_handler(func: Callable):
     @functools.wraps(func)
     async def wrapper(*args, **kwargs):
@@ -195,23 +194,18 @@ class Tapper:
                 minutes, seconds = divmod(remainder, 60)
                 logger.info(f"{self.session_name} | Time until next avatar upload: <y>{hours}</y> hours, <y>{minutes}</y> minutes, and <y>{seconds}</y> seconds")
                 return None
-    
+                
     @error_handler
     async def get_tasks(self, http_client):
         return await self.make_request(http_client, 'GET', endpoint="/tasks/user", data={'group': 'cats'})
-    
     
     @error_handler
     async def check_available(self, http_client):
         return await self.make_request(http_client, 'GET', endpoint="/exchange-claim/check-available")
     
-    
-    
-    
     @error_handler
     async def done_tasks(self, http_client, task_id, type_):
         return await self.make_request(http_client, 'POST', endpoint=f"/tasks/{task_id}/{type_}", json={})
-    
     
     @error_handler
     async def check_proxy(self, http_client: aiohttp.ClientSession) -> None:
@@ -284,7 +278,6 @@ class Tapper:
                 UserHasOgPass = user.get('hasOgPass', False)
                 logger.info(f"{self.session_name} | User has OG Pass: <y>{UserHasOgPass}</y>")
                 
-
                 data_task = await self.get_tasks(http_client=http_client)
                 if data_task is not None and data_task.get('tasks', {}):
                     for task in data_task.get('tasks'):
@@ -316,9 +309,7 @@ class Tapper:
                             
                         await asyncio.sleep(random.randint(5, 7))
                 else:
-                    logger.error(f"{self.session_name} | No tasks")
-                
-                
+                    logger.error(f"{self.session_name} | No tasks") 
             
                 for _ in range(3 if UserHasOgPass else 1):
                     reward = await self.send_cats(http_client=http_client)
