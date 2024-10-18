@@ -140,60 +140,73 @@ class Tapper:
     
     @error_handler
     async def send_cats(self, http_client):
-        avatar_info = await self.make_request(http_client, 'GET', endpoint="/user/avatar")
-        if avatar_info:
-            attempt_time_str = avatar_info.get('attemptTime', None)
-            if not attempt_time_str:
-                time_difference = timedelta(hours=25)
-            else:
-                attempt_time = datetime.fromisoformat(attempt_time_str.replace('Z', '+00:00'))
-                current_time = datetime.now(timezone.utc)
-                next_day_3am = (attempt_time + timedelta(days=1)).replace(hour=3, minute=0, second=0, microsecond=0)
-                
-                if current_time >= next_day_3am:
+        try:
+            avatar_info = await self.make_request(http_client, 'GET', endpoint="/user/avatar")
+            if avatar_info:
+                attempt_time_str = avatar_info.get('attemptTime', None)
+                if not attempt_time_str:
                     time_difference = timedelta(hours=25)
                 else:
-                    time_difference = next_day_3am - current_time
+                    attempt_time = datetime.fromisoformat(attempt_time_str.replace('Z', '+00:00'))
+                    current_time = datetime.now(timezone.utc)
+                    next_day_3am = (attempt_time + timedelta(days=1)).replace(hour=3, minute=0, second=0, microsecond=0)
+                
+                    if current_time >= next_day_3am:
+                        time_difference = timedelta(hours=25)
+                    else:
+                        time_difference = next_day_3am - current_time
 
-            if time_difference > timedelta(hours=24):
-                response = await http_client.get(f"https://cataas.com/cat?timestamp={int(datetime.now().timestamp() * 1000)}", headers={
-                    "accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
-                    "accept-language": "en-US,en;q=0.9,ru;q=0.8",
-                    "sec-ch-ua": "\"Not;A=Brand\";v=\"24\", \"Chromium\";v=\"128\"",
-                    "sec-ch-ua-mobile": "?0",
-                    "sec-ch-ua-platform": "\"macOS\"",
-                    "sec-fetch-dest": "image",
-                    "sec-fetch-mode": "no-cors",
-                    "sec-fetch-site": "cross-site"
-                })
-                if not response and response.status not in [200, 201]:
-                    logger.error(f"{self.session_name} | Failed to fetch image from cataas.com")
-                    return None
-                
-                image_content = await response.read()
+                if time_difference > timedelta(hours=24):
+                    try:
+                        response = await http_client.get(f"https://cataas.com/cat?timestamp={int(datetime.now().timestamp() * 1000)}", headers={
+                            "accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+                            "accept-language": "en-US,en;q=0.9,ru;q=0.8",
+                            "sec-ch-ua": "\"Not;A=Brand\";v=\"24\", \"Chromium\";v=\"128\"",
+                            "sec-ch-ua-mobile": "?0",
+                            "sec-ch-ua-platform": "\"macOS\"",
+                            "sec-fetch-dest": "image",
+                            "sec-fetch-mode": "no-cors",
+                            "sec-fetch-site": "cross-site"
+                        })
                     
-                boundary = f"----WebKitFormBoundary{uuid.uuid4().hex}"
-                form_data = (
-                    f'--{boundary}\r\n'
-                    f'Content-Disposition: form-data; name="photo"; filename="{uuid.uuid4().hex}.jpg"\r\n'
-                    f'Content-Type: image/jpeg\r\n\r\n'
-                ).encode('utf-8')
+                        if response.status not in [200, 201]:
+                            logger.error(f"{self.session_name} | Failed to fetch image from cataas.com")
+                            return None
+
+                        image_content = await response.read()
+                        
+                        boundary = f"----WebKitFormBoundary{uuid.uuid4().hex}"
+                        form_data = (
+                            f'--{boundary}\r\n'
+                            f'Content-Disposition: form-data; name="photo"; filename="{uuid.uuid4().hex}.jpg"\r\n'
+                            f'Content-Type: image/jpeg\r\n\r\n'
+                        ).encode('utf-8')
+                    
+                        form_data += image_content
+                        form_data += f'\r\n--{boundary}--\r\n'.encode('utf-8')
+                    
+                        headers = http_client.headers.copy()
+                        headers['Content-Type'] = f'multipart/form-data; boundary={boundary}'
+                        response = await self.make_request(http_client, 'POST', endpoint="/user/avatar/upgrade", data=form_data, headers=headers)
+                    
+                        if response:
+                            return response.get('rewards', 0)
+                        else:
+                            return None
                 
-                form_data += image_content
-                form_data += f'\r\n--{boundary}--\r\n'.encode('utf-8')
-                
-                headers = http_client.headers.copy()
-                headers['Content-Type'] = f'multipart/form-data; boundary={boundary}'
-                response = await self.make_request(http_client, 'POST', endpoint="/user/avatar/upgrade", data=form_data, headers=headers)
-                if response:
-                    return response.get('rewards', 0)
+                    except aiohttp.ClientError as e:
+                        logger.error(f"{self.session_name} | Error in send_cats: {e}")
+                        return None
                 else:
+                    if time_difference <= timedelta(hours=24):
+                        hours, remainder = divmod(time_difference.seconds, 3600)
+                        minutes, seconds = divmod(remainder, 60)
+                        logger.info(f"{self.session_name} | Time until next avatar upload: {hours} hours, {minutes} minutes, and {seconds} seconds")
                     return None
-            else:
-                hours, remainder = divmod(time_difference.seconds, 3600)
-                minutes, seconds = divmod(remainder, 60)
-                logger.info(f"{self.session_name} | Time until next avatar upload: <y>{hours}</y> hours, <y>{minutes}</y> minutes, and <y>{seconds}</y> seconds")
-                return None
+
+        except aiohttp.ClientError as e:
+            logger.error(f"{self.session_name} | Error in send_cats: {e}")
+            return None
                 
     @error_handler
     async def get_tasks(self, http_client):
