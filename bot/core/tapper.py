@@ -215,7 +215,6 @@ class Tapper:
     
     @error_handler
     async def run(self) -> None:
-        self.youtube_answers = await fetch_youtube_answers()
         
         if settings.USE_RANDOM_DELAY_IN_RUN:
             random_delay = random.randint(settings.RANDOM_DELAY_IN_RUN[0], settings.RANDOM_DELAY_IN_RUN[1])
@@ -295,6 +294,7 @@ class Tapper:
                         type_ = ('check' if type in ['SUBSCRIBE_TO_CHANNEL'] else 'complete')
 
                         if type == 'YOUTUBE_WATCH':
+                            self.youtube_answers = await fetch_youtube_answers()
                             answer = await get_youtube_answer(title, self.youtube_answers)
                             if answer:
                                 type_ += f'?answer={answer}'
