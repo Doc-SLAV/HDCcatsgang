@@ -20,6 +20,7 @@ import functools
 from bot.utils import logger
 from bot.exceptions import InvalidSession
 from .headers import headers
+from httpx import HTTPStatusError
 import json
 
 def error_handler(func: Callable):
@@ -59,6 +60,7 @@ class Tapper:
         self.tg_web_data = None
         self.tg_client_id = 0
         self.youtube_answers = None 
+        self.last_send_cats_attempt = None
 
     async def get_tg_web_data(self) -> str:
         
@@ -122,11 +124,23 @@ class Tapper:
             logger.error(f"{self.session_name} | Unknown error: {error}")
             await asyncio.sleep(delay=3)
 
+
     @error_handler
     async def make_request(self, http_client, method, endpoint=None, url=None, **kwargs):
-        response = await http_client.request(method, url or f"https://api.catshouse.club{endpoint or ''}", **kwargs)
-        response.raise_for_status()
-        return await response.json()
+        try:
+            response = await http_client.request(method, url or f"https://api.catshouse.club{endpoint or ''}", **kwargs)
+            response.raise_for_status()  
+            return await response.json()
+
+        except HTTPStatusError as e:
+            if e.response.status_code == 500:
+                return None  
+            else:
+                logger.error(f"Error in make_request: {e.response.status_code}, message='{e.response.text}', url='{url}'")
+                return None  
+        except Exception as e:
+            logger.error(f"Unexpected error in make_request: {str(e)}")
+            return None
     
     @error_handler
     async def login(self, http_client, ref_id):
@@ -140,73 +154,72 @@ class Tapper:
     
     @error_handler
     async def send_cats(self, http_client):
-        try:
-            avatar_info = await self.make_request(http_client, 'GET', endpoint="/user/avatar")
-            if avatar_info:
-                attempt_time_str = avatar_info.get('attemptTime', None)
-                if not attempt_time_str:
+        avatar_info = await self.make_request(http_client, 'GET', endpoint="/user/avatar")
+        if avatar_info:
+            attempt_time_str = avatar_info.get('attemptTime', None)
+            if not attempt_time_str:
+                time_difference = timedelta(hours=25)
+            else:
+                attempt_time = datetime.fromisoformat(attempt_time_str.replace('Z', '+00:00'))
+                current_time = datetime.now(timezone.utc)
+                next_day_3am = (attempt_time + timedelta(days=1)).replace(hour=3, minute=0, second=0, microsecond=0)
+
+                if current_time >= next_day_3am:
                     time_difference = timedelta(hours=25)
                 else:
-                    attempt_time = datetime.fromisoformat(attempt_time_str.replace('Z', '+00:00'))
-                    current_time = datetime.now(timezone.utc)
-                    next_day_3am = (attempt_time + timedelta(days=1)).replace(hour=3, minute=0, second=0, microsecond=0)
-                
-                    if current_time >= next_day_3am:
-                        time_difference = timedelta(hours=25)
-                    else:
-                        time_difference = next_day_3am - current_time
+                    time_difference = next_day_3am - current_time
 
-                if time_difference > timedelta(hours=24):
-                    try:
-                        response = await http_client.get(f"https://cataas.com/cat?timestamp={int(datetime.now().timestamp() * 1000)}", headers={
-                            "accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
-                            "accept-language": "en-US,en;q=0.9,ru;q=0.8",
-                            "sec-ch-ua": "\"Not;A=Brand\";v=\"24\", \"Chromium\";v=\"128\"",
-                            "sec-ch-ua-mobile": "?0",
-                            "sec-ch-ua-platform": "\"macOS\"",
-                            "sec-fetch-dest": "image",
-                            "sec-fetch-mode": "no-cors",
-                            "sec-fetch-site": "cross-site"
-                        })
-                    
-                        if response.status not in [200, 201]:
-                            logger.error(f"{self.session_name} | Failed to fetch image from cataas.com")
-                            return None
-
-                        image_content = await response.read()
-                        
-                        boundary = f"----WebKitFormBoundary{uuid.uuid4().hex}"
-                        form_data = (
-                            f'--{boundary}\r\n'
-                            f'Content-Disposition: form-data; name="photo"; filename="{uuid.uuid4().hex}.jpg"\r\n'
-                            f'Content-Type: image/jpeg\r\n\r\n'
-                        ).encode('utf-8')
-                    
-                        form_data += image_content
-                        form_data += f'\r\n--{boundary}--\r\n'.encode('utf-8')
-                    
-                        headers = http_client.headers.copy()
-                        headers['Content-Type'] = f'multipart/form-data; boundary={boundary}'
-                        response = await self.make_request(http_client, 'POST', endpoint="/user/avatar/upgrade", data=form_data, headers=headers)
-                    
-                        if response:
-                            return response.get('rewards', 0)
-                        else:
-                            return None
-                
-                    except aiohttp.ClientError as e:
-                        logger.error(f"{self.session_name} | Error in send_cats: {e}")
-                        return None
-                else:
-                    if time_difference <= timedelta(hours=24):
-                        hours, remainder = divmod(time_difference.seconds, 3600)
-                        minutes, seconds = divmod(remainder, 60)
-                        logger.info(f"{self.session_name} | Time until next avatar upload: {hours} hours, {minutes} minutes, and {seconds} seconds")
+            if time_difference > timedelta(hours=24):
+                # Check if the last attempt was within the last 24 hours
+                if self.last_send_cats_attempt and datetime.now() - self.last_send_cats_attempt < timedelta(hours=24):
+                    # Skip logging error for repeated attempts within 24 hours
                     return None
 
-        except aiohttp.ClientError as e:
-            logger.error(f"{self.session_name} | Error in send_cats: {e}")
-            return None
+                response = await http_client.get(f"https://cataas.com/cat?timestamp={int(datetime.now().timestamp() * 1000)}", headers={
+                    "accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+                    "accept-language": "en-US,en;q=0.9,ru;q=0.8",
+                    "sec-ch-ua": "\"Not;A=Brand\";v=\"24\", \"Chromium\";v=\"128\"",
+                    "sec-ch-ua-mobile": "?0",
+                    "sec-ch-ua-platform": "\"macOS\"",
+                    "sec-fetch-dest": "image",
+                    "sec-fetch-mode": "no-cors",
+                    "sec-fetch-site": "cross-site"
+                })
+                if not response or response.status not in [200, 201]:
+                    # Log error only if more than 24 hours have passed since the last attempt
+                    if not self.last_send_cats_attempt or datetime.now() - self.last_send_cats_attempt >= timedelta(hours=24):
+                        logger.error(f"{self.session_name} | Failed to fetch image from cataas.com")
+                    # Update the last attempt time
+                    self.last_send_cats_attempt = datetime.now()
+                    return None
+
+                image_content = await response.read()
+
+                boundary = f"----WebKitFormBoundary{uuid.uuid4().hex}"
+                form_data = (
+                    f'--{boundary}\r\n'
+                    f'Content-Disposition: form-data; name="photo"; filename="{uuid.uuid4().hex}.jpg"\r\n'
+                    f'Content-Type: image/jpeg\r\n\r\n'
+                ).encode('utf-8')
+
+                form_data += image_content
+                form_data += f'\r\n--{boundary}--\r\n'.encode('utf-8')
+
+                headers = http_client.headers.copy()
+                headers['Content-Type'] = f'multipart/form-data; boundary={boundary}'
+                response = await self.make_request(http_client, 'POST', endpoint="/user/avatar/upgrade", data=form_data, headers=headers)
+
+                if response:
+                    # Successful attempt, reset the last attempt time
+                    self.last_send_cats_attempt = None
+                    return response.get('rewards', 0)
+                else:
+                    return None
+            else:
+                hours, remainder = divmod(time_difference.seconds, 3600)
+                minutes, seconds = divmod(remainder, 60)
+                logger.info(f"{self.session_name} | Time until next avatar upload: <y>{hours}</y> hours, <y>{minutes}</y> minutes, and <y>{seconds}</y> seconds")
+                return None
                 
     @error_handler
     async def get_tasks(self, http_client):
