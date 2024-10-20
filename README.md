@@ -39,10 +39,10 @@ Before you begin, make sure you have the following installed:
 3. Record the API_ID and API_HASH provided after registering your application in the .env file.
 
 ## Installation
-You can download the [**repository**](https://github.com/Doc-SLAV/catsgang/archive/refs/heads/main.zip) by cloning it to your system and installing the necessary dependencies:
+You can download the [**repository**](https://github.com/Doc-SLAV/HDCcatsgang/archive/refs/heads/main.zip) by cloning it to your system and installing the necessary dependencies:
 ```shell
-git clone https://github.com/Doc-SLAV/catsgang.git
-cd catsgang
+git clone https://github.com/Doc-SLAV/HDCcatsgang.git
+cd HDCcatsgang
 ```
 
 Then you can do automatic installation by typing:
